@@ -1,1 +1,1 @@
-Stop all image requests when navigating folders - Improves page switching responsiveness and reduces bandwidth usage by interrupting loading of non-essential images
+Massively speeds up browsing of image-heavy folders by suspending off-screen thumbnails (saving bandwidth, smoother scrolling) and cancelling remaining image loads when navigating folders
