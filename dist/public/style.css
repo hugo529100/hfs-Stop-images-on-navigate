@@ -1,0 +1,5 @@
+/* style.css */
+img.scroll-suspended {
+    opacity: 0 !important;
+    visibility: hidden !important;
+}

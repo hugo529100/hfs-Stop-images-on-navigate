@@ -1,12 +1,9 @@
 'use strict';{
+    // ================= 原有层：切目录全量打断 =================
     let lastUri = HFS.state.uri
 
-    // 默认白名单：只保留 /images/banner/ 路径的图片
-    const defaultWhitelist = [
-        '/images/banner/'
-    ]
+    const defaultWhitelist = ['/images/banner/']
 
-    // 获取白名单配置
     function getWhitelist() {
         try {
             const config = HFS.getPluginConfig()
@@ -15,73 +12,142 @@
                     .map(item => item.trim())
                     .filter(item => item.length > 0)
             }
-        } catch (e) {
-            // 如果获取配置失败，使用默认白名单
-        }
+        } catch (e) {}
         return defaultWhitelist
     }
 
-    // 检查图片是否在白名单中
     function isInWhitelist(src, whitelist) {
         if (!src) return false
-        if (src.startsWith('data:')) return true // data: URI 总是保留
-
+        if (src.startsWith('data:')) return true
         for (const pattern of whitelist) {
-            if (src.includes(pattern)) {
-                return true
-            }
+            if (src.includes(pattern)) return true
         }
         return false
     }
 
-    // 判断是否应该拦截该图片
-    //   1) data: URI 永不拦
-    //   2) 带 ?get=thumb 的缩略图一律拦（即使命中白名单）
-    //   3) 白名单命中 → 放行
-    //   4) 其余 → 全拦
     function shouldBlock(src, whitelist) {
         if (!src) return false
         if (src.startsWith('data:')) return false
-
-        // 缩略图点名：带 ?get=thumb 一律拦截（优先于白名单）
         if (src.includes('?get=thumb')) return true
-
-        // 白名单放行
         if (isInWhitelist(src, whitelist)) return false
-
-        // 非白名单全拦
         return true
     }
 
     function stopAllImages() {
         const whitelist = getWhitelist()
         const imgs = document.querySelectorAll('img')
-
         imgs.forEach(img => {
             const src = img.src || ''
-
-            // 检查是否应该拦截
-            if (!shouldBlock(src, whitelist)) {
-                return // 跳过该图片（保留）
-            }
-
-            // 不在白名单中的图片全部拦截
-            // 避免触发 onload / onerror
+            if (!shouldBlock(src, whitelist)) return
             img.onload = null
             img.onerror = null
-
-            // 清空 src 中断请求
             if (src && !src.startsWith('data:')) {
-                img.src = ''
+                img.removeAttribute('src')
             }
         })
     }
 
-    // 监听目录变化
     HFS.watchState('uri', (uri) => {
         if (uri !== lastUri) {
             lastUri = uri
             stopAllImages()
         }
+    }, true)
+
+    // ================= 新增层：.dir 缩略图可见范围管控（带缓冲带，不闪） =================
+    // 策略：IntersectionObserver + rootMargin 缓冲带。视口外 rootMargin 外才中断，
+    // 回到 rootMargin 内才恢复。边缘图在缓冲带内状态稳定，不闪。
+    const DIR_SELECTOR = '.dir'
+    const THUMB_SELECTOR = 'img.thumbnail'
+
+    function getRootMargin() {
+        try {
+            const config = HFS.getPluginConfig()
+            if (config && config.scrollRootMargin != null) {
+                const n = Number(config.scrollRootMargin)
+                if (!isNaN(n) && n >= 0) return `${n}px 0px`
+            }
+        } catch (e) {}
+        return '100px 0px'
+    }
+
+    function isDirThumb(img) {
+        if (!img || img.tagName !== 'IMG') return false
+        if (!img.matches(THUMB_SELECTOR)) return false
+        if (!img.closest(DIR_SELECTOR)) return false
+        const src = img.getAttribute('src') || img.dataset.scrollOriginalSrc || ''
+        if (!src || src.startsWith('data:')) return false
+        return true
+    }
+
+    let scrollIO = null
+
+    function buildScrollIO() {
+        if (scrollIO) scrollIO.disconnect()
+
+        scrollIO = new IntersectionObserver((entries) => {
+            for (const e of entries) {
+                const img = e.target
+                if (!isDirThumb(img)) continue
+                if (e.isIntersecting) resumeScroll(img)
+                else suspendScroll(img)
+            }
+        }, { root: null, rootMargin: getRootMargin(), threshold: 0 })
+    }
+
+    function suspendScroll(img) {
+        const src = img.getAttribute('src')
+        if (!src || src.startsWith('data:')) return
+        if (!img.dataset.scrollOriginalSrc) img.dataset.scrollOriginalSrc = src
+        img.dataset.scrollSuspended = '1'
+        img.classList.add('scroll-suspended')
+        img.removeAttribute('src')
+    }
+
+    function resumeScroll(img) {
+        if (!img.dataset.scrollSuspended) return
+        delete img.dataset.scrollSuspended
+        img.classList.remove('scroll-suspended')
+        const original = img.dataset.scrollOriginalSrc
+        if (original && !img.classList.contains('thumbnail-suspended')) {
+            // 重置淡入标记，让淡入插件对恢复的图重新淡入
+            delete img.dataset.fadeProcessed
+            img.style.opacity = ''
+            img.setAttribute('src', original)
+        }
+    }
+
+    function observeAllDirThumbs() {
+        if (!scrollIO) return
+        document.querySelectorAll(`${DIR_SELECTOR} ${THUMB_SELECTOR}`).forEach(img => {
+            if (isDirThumb(img)) scrollIO.observe(img)
+        })
+    }
+
+    const scrollMO = new MutationObserver((muts) => {
+        for (const m of muts) {
+            for (const node of m.addedNodes) {
+                if (node.nodeType !== 1) continue
+                if (node.matches?.(THUMB_SELECTOR) && node.closest(DIR_SELECTOR)) {
+                    if (isDirThumb(node) && scrollIO) scrollIO.observe(node)
+                }
+                if (node.querySelectorAll && scrollIO) {
+                    node.querySelectorAll(THUMB_SELECTOR).forEach(img => {
+                        if (img.closest(DIR_SELECTOR) && isDirThumb(img)) {
+                            scrollIO.observe(img)
+                        }
+                    })
+                }
+            }
+        }
+    })
+    scrollMO.observe(document.body, { childList: true, subtree: true })
+
+    buildScrollIO()
+    setTimeout(observeAllDirThumbs, 500)
+
+    HFS.watchState('uri', () => {
+        buildScrollIO()
+        setTimeout(observeAllDirThumbs, 200)
     }, true)
 }
