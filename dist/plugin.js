@@ -1,7 +1,7 @@
 exports.version = 1.8
 exports.apiRequired = 8.0
 exports.description = "Massively speeds up browsing of image-heavy folders by suspending off-screen thumbnails (saving bandwidth, smoother scrolling) and cancelling remaining image loads when navigating folders"
-exports.repo = "Hug3O/Stop-images-on-navigate"
+exports.repo = "hugo529100/hfs-Stop-images-on-navigate"
 exports.frontend_js = "main.js"
 exports.frontend_css = "style.css"
 
