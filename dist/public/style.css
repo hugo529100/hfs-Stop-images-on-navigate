@@ -1,5 +1,14 @@
 /* style.css */
+
+/* 視口外：整張圖藏起來（原有行為） */
 img.scroll-suspended {
     opacity: 0 !important;
+    visibility: hidden !important;
+}
+
+/* 清單／統計還沒跑完：縮略圖先不顯示，改由 JS 插入 HFS 原生的
+   檔案類型圖標（span.icon.font-icon.fa-*）。只有在組不出原生圖標時
+   才會看到這條規則，作用是藏掉瀏覽器的裂圖框架。 */
+img.thumbnail.list-gate-hold {
     visibility: hidden !important;
 }
